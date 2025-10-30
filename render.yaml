@@ -1,0 +1,10 @@
+# render.yaml
+services:
+  - type: web
+    name: blender-teaser-renderer
+    env: python
+    buildCommand: "./build.sh"
+    startCommand: "python server.py"
+    envVars:
+      - key: LOGO_PATH
+        value: CVPRk7F2_400x400.jpg
