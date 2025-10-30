@@ -2,6 +2,7 @@ import bpy
 import os
 import math
 import sys
+import shutil
 
 # ————————————————————————————————————————
 # CONFIGURATION
@@ -12,7 +13,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 OUTPUT_MP4 = os.path.join(OUTPUT_DIR, "imback.mp4")
 RES_X, RES_Y = 1920, 1080
 FPS = 30
-FRAME_END = 70  # 70 renders = ~2.33s motion + 2s hold = 4.33s → we'll extend last frame to hit 5s
+RENDER_FRAMES = 70  # Only render 70 frames
+TOTAL_FRAMES = 150  # 150 frames = 5 seconds
 
 # Resolve logo path
 if not os.path.isabs(LOGO_PATH):
@@ -33,9 +35,8 @@ scene.render.resolution_y = RES_Y
 scene.render.resolution_percentage = 100
 scene.render.fps = FPS
 scene.frame_start = 1
-scene.frame_end = FRAME_END
+scene.frame_end = RENDER_FRAMES
 scene.render.image_settings.file_format = 'PNG'
-scene.render.filepath = os.path.join(OUTPUT_DIR, "frame_####.png")
 
 eevee = scene.eevee
 eevee.use_bloom = True
@@ -51,7 +52,7 @@ eevee.taa_samples = 16
 # ————————————————————————————————————————
 road = bpy.ops.mesh.primitive_plane_add(size=2, location=(0, 0, -0.01))
 road_obj = bpy.context.active_object
-road_obj.scale = (40, 5, 1)
+road_obj.scale = (30, 3, 1)  # narrower road
 road_mat = bpy.data.materials.new("RoadMat")
 road_mat.use_nodes = True
 bsdf = road_mat.node_tree.nodes["Principled BSDF"]
@@ -60,44 +61,39 @@ bsdf.inputs['Roughness'].default_value = 0.9
 road_obj.data.materials.append(road_mat)
 
 # ————————————————————————————————————————
-# CAMERA PATH (frames 1-70)
+# CAMERA
 # ————————————————————————————————————————
 cam = bpy.ops.object.camera_add(location=(0, -10, 1.5), rotation=(math.radians(90), 0, 0))
 camera = bpy.context.active_object
 scene.camera = camera
 
-# Frame 1: start moving forward
 camera.location = (0, -10, 1.5)
 camera.rotation_euler = (math.radians(90), 0, 0)
 camera.keyframe_insert("location", frame=1)
 camera.keyframe_insert("rotation_euler", frame=1)
 
-# Frame 30: begin turning right
 camera.location = (0, 0, 1.5)
 camera.rotation_euler = (math.radians(90), 0, math.radians(-30))
 camera.keyframe_insert("location", frame=30)
 camera.keyframe_insert("rotation_euler", frame=30)
 
-# Frame 60: fully turned, facing text + monkey
 camera.location = (7, 0, 1.5)
 camera.rotation_euler = (math.radians(90), 0, math.radians(-90))
 camera.keyframe_insert("location", frame=60)
 camera.keyframe_insert("rotation_euler", frame=60)
 
-# Frame 70: hold position
 camera.location = (7, 0, 1.5)
 camera.rotation_euler = (math.radians(90), 0, math.radians(-90))
 camera.keyframe_insert("location", frame=70)
 camera.keyframe_insert("rotation_euler", frame=70)
 
 # ————————————————————————————————————————
-# MAIN MONKEY (from your original)
+# MAIN MONKEY
 # ————————————————————————————————————————
 monkey = bpy.ops.mesh.primitive_monkey_add(size=0.8, location=(7.5, 0, 0.4))
 monkey_obj = bpy.context.active_object
 monkey_obj.name = "MainMonkey"
 
-# Shape keys for expression
 monkey_obj.shape_key_add(name="Basis", from_mix=False)
 sk_smirk = monkey_obj.shape_key_add(name="Smirk_Left", from_mix=False)
 sk_tilt = monkey_obj.shape_key_add(name="Head_Tilt", from_mix=False)
@@ -114,7 +110,6 @@ bsdf = monkey_mat.node_tree.nodes["Principled BSDF"]
 bsdf.inputs['Base Color'].default_value = (0.3, 0.3, 0.3, 1)
 monkey_obj.data.materials.append(monkey_mat)
 
-# Animate wave (smirk + tilt)
 if monkey_obj.data.shape_keys:
     kb = monkey_obj.data.shape_keys.key_blocks
     kb["Smirk_Left"].value = 0
@@ -165,7 +160,7 @@ links.new(mix.outputs['Shader'], out.inputs['Surface'])
 text.data.materials.append(text_mat)
 
 # ————————————————————————————————————————
-# HOLOGRAM: CVPRk7F2_400x400.jpg
+# HOLOGRAM
 # ————————————————————————————————————————
 holo = bpy.ops.mesh.primitive_plane_add(size=1, location=(10.5, 0, 0.5))
 holo_obj = bpy.context.active_object
@@ -189,7 +184,6 @@ links.new(emi.outputs['Emission'], out.inputs['Surface'])
 
 holo_obj.data.materials.append(holo_mat)
 
-# Animate hologram pulse
 for f in [60, 65, 70]:
     emi.inputs['Strength'].default_value = 5.0 if f == 65 else 3.0
     emi.inputs['Strength'].keyframe_insert("default_value", frame=f)
@@ -211,27 +205,31 @@ fill_light = bpy.context.active_object
 fill_light.data.energy = 200
 
 # ————————————————————————————————————————
-# RENDER
+# RENDER 70 FRAMES
 # ————————————————————————————————————————
-print(f"🎬 Rendering {FRAME_END} frames to {OUTPUT_DIR}...")
+print(f"🎬 Rendering {RENDER_FRAMES} frames to {OUTPUT_DIR}...")
 
-for frame in range(1, FRAME_END + 1):
+for frame in range(1, RENDER_FRAMES + 1):
     scene.frame_set(frame)
-    scene.render.filepath = os.path.join(OUTPUT_DIR, f"frame_{frame:04d}.png")
+    filepath = os.path.join(OUTPUT_DIR, f"frame_{frame:04d}.png")
+    scene.render.filepath = filepath
     bpy.ops.render.render(write_still=True)
     print(f"✅ Frame {frame} saved")
 
 # ————————————————————————————————————————
-# ENCODE TO MP4 (with final frame held for 2 seconds)
+# EXTEND TO 150 FRAMES (5 SECONDS)
+# ————————————————————————————————————————
+print("⏳ Extending final frame to reach 5 seconds (150 frames)...")
+last_frame_path = os.path.join(OUTPUT_DIR, "frame_0070.png")
+for i in range(RENDER_FRAMES + 1, TOTAL_FRAMES + 1):
+    new_path = os.path.join(OUTPUT_DIR, f"frame_{i:04d}.png")
+    shutil.copy2(last_frame_path, new_path)
+
+# ————————————————————————————————————————
+# ENCODE TO MP4
 # ————————————————————————————————————————
 try:
     import subprocess
-    # First, copy frame_0070.png to frame_0071.png through frame_0080.png (10 extra frames = 2 seconds at 30 FPS)
-    for i in range(71, 81):
-        src = os.path.join(OUTPUT_DIR, "frame_0070.png")
-        dst = os.path.join(OUTPUT_DIR, f"frame_{i:04d}.png")
-        os.system(f"cp {src} {dst}")
-
     ffmpeg_cmd = [
         'ffmpeg', '-y',
         '-framerate', str(FPS),
